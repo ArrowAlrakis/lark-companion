@@ -1,0 +1,1721 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8" />
+<title>Dragon Companion Mobile</title>
+<meta name="viewport" content="width=device-width, user-scalable=no" />
+
+<link rel="manifest" href="manifest.json">
+<meta name="theme-color" content="#12323b">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<link rel="apple-touch-icon" href="icons/icon-192.png">
+
+<script type="module">
+import "https://zimjs.org/cdn/019/zim";
+
+new Frame(FIT, 720, 1280, "#dff4ef", "#111111", ready, [
+    // Google Fonts
+    "gf_Montserrat:ital,wght@0,100..900;1,100..900",
+
+    "bg_trees.png",
+    "bg_nest.png",
+
+    "egg_idle.png",
+    "egg_crack.png",
+    "egg_open1.png",
+    "egg_open2.png",
+
+    "dragon_idle.png",
+    "dragon_idle_eye_closed.png",
+    "dragon_dizzy.png",
+    "dragon_happy.png",
+    "dragon_dirty.png",
+    "dragon_sleep.png",
+    "dragon_unhappy.png",
+    "dragon_hungry.png",
+    "dragon_look.png",
+    "dragon_dirty_blink.png",
+    "dragon_look_blink.png",
+    "dragon_hungry_blink.png",
+    "dragon_unhappy_blink.png",
+
+    "dragon_idle_back_wing.png",
+    "dragon_idle_body.png",
+    "dragon_idle_body_blink.png",
+    "dragon_idle_front_wing.png",
+
+    "food.png",
+    "butterfly.png",
+
+    "food_icon.png",
+    "water_icon.png",
+    "butterfly_icon.png",
+    
+    "bgm.mp3",
+    "Bubbles01.mp3",
+    "Bubbles03.mp3",
+    "Bubbles05.mp3",
+    "crack.mp3",
+    "eat.mp3",
+    "magic.mp3",
+    "dragon01.mp3",
+    "dragon02.mp3",
+    "dragon03.mp3"
+
+], "assets/");
+
+function ready() {
+
+    let gameData = {
+        stage: "egg",
+        hunger: 90,
+        clean: 90,
+        fun: 90
+    };
+
+    const bgLayer = new Container(W, H).addTo();
+    const fxLayer = new Container(W, H).addTo();
+    const playLayer = new Container(W, H).addTo();
+    const uiLayer = new Container(W, H).addTo();
+    const LOW_THRESHOLD = 50;
+    const SLEEP_AFTER = 12; // 几秒不互动睡觉
+    let lastInteractionTime = Date.now();
+    
+
+    let currentPetPic = "egg_idle.png";
+    let currentMood = "egg"; // egg, idle, hungry, dirty, unhappy, happy, look, dizzy, sleep
+
+    let petBaseScale = 1;
+    let petHolderBaseX = 0;
+    let petHolderBaseY = 0;
+    let petHolderBaseScale = 1;
+    let breathingMode = "";
+
+    let tempMoodTimeout = null;
+    let dizzyTimeout = null;
+    let butterflyMotion = null;
+    let activeButterfly = null;
+    let butterflyBusy = false;
+    let butterflyFlightStopped = false;
+    let butterflyElapsed = 0;
+
+    // 手机tilt + 桌面鼠标移动 叠加影响背景
+    let tiltX = 0;
+    let tiltY = 0;
+    let fxDrift = 0;
+    let orientationEnabled = false;
+    let motionPermissionRequested = false;
+    let mouseParallaxX = 0;
+    let mouseParallaxY = 0;
+
+    // 本地储存
+    const SAVE_KEY = "dragon_companion_save_v1";
+    
+    const NEED_DECAY_INTERVAL = 4;   // 测试时改这里，数字越小掉得越快
+    const HUNGER_DECAY = 5;          // 每次掉多少
+    const CLEAN_DECAY = 4;
+    const FUN_DECAY = 6;
+
+    const WING_PIVOT_X = 623;
+    const WING_PIVOT_Y = 872;
+    const IMAGE_CENTER_X = 700;
+    const IMAGE_CENTER_Y = 700;
+
+    const WING_OFFSET_X = WING_PIVOT_X - IMAGE_CENTER_X; // -77
+    const WING_OFFSET_Y = WING_PIVOT_Y - IMAGE_CENTER_Y; // 172
+
+    STYLE = {
+        font: "Montserrat"
+    }
+
+    // ---------------------------------
+    // SFX
+    // ---------------------------------
+    let bgmStarted = false;
+    let bgm;
+
+    const DRAGON_SFX = ["dragon02.mp3", "dragon03.mp3"];
+    const BUBBLE_SFX = ["Bubbles01.mp3", "Bubbles03.mp3", "Bubbles05.mp3"];
+
+    function playOnce(src, vol=0.7) {
+        const a = new Aud(src);
+        a.volume = vol;
+        a.play();
+        return a;
+    }
+
+    function startBGM() {
+        if (bgmStarted) return;
+        bgmStarted = true;
+
+        bgm = new Aud("bgm.mp3");
+        bgm.loop = true;
+        bgm.volume = 0.18;
+        bgm.play();
+    }
+
+    function playRandomDragon(vol=0.35) {
+        const src = DRAGON_SFX[Math.floor(Math.random() * DRAGON_SFX.length)];
+        playOnce(src, vol);
+    }
+
+    function playRandomBubble(vol=0.6) {
+        const src = BUBBLE_SFX[Math.floor(Math.random() * BUBBLE_SFX.length)];
+        playOnce(src, vol);
+    }
+
+    // ---------------------------------
+    // BACKGROUND
+    // ---------------------------------
+    const trees = new Pic("bg_trees.png")
+        .centerReg(bgLayer)
+        .sca(1.02);
+
+    trees.loc(W/2, H/2);
+
+    // ---------------------------------
+    // NEST
+    // ---------------------------------
+    const nest = new Pic("bg_nest.png")
+        .centerReg(playLayer)
+        .sca(1);
+
+    nest.loc(W/2, H/2 - 20);
+
+    function updateParallax() {
+        const totalX = tiltX + mouseParallaxX;
+        const totalY = tiltY + mouseParallaxY;
+
+        trees.x = W/2 + totalX * 18;
+        trees.y = H/2 + totalY * 6;
+
+        nest.x = W/2 + totalX * 7;
+        nest.y = H/2 - 20 + totalY * 3;
+
+        fxLayer.x = Math.sin(fxDrift) * 3 + totalX * 5;
+        fxLayer.y = Math.cos(fxDrift * 0.8) * 2 + totalY * 3;
+
+        S.update();
+    }
+
+    // ---------------------------------
+    // FIREFLY
+    // ---------------------------------
+    function makeAmbientFirefly() {
+        const f = new Container().addTo(fxLayer);
+        f.mouseEnabled = false;
+
+        const glow = new Circle(rand(8, 20), "rgba(255,240,160,0.10)").addTo(f);
+        const dot  = new Circle(rand(1.5, 6.5), "rgba(255,245,190,0.75)").addTo(f);
+
+        f.centerReg();
+
+        // 避开最中心一小块，别太抢龙
+        let fx = rand(30, W - 30);
+        let fy = rand(40, H - 240);
+
+        if (fx > W/2 - 120 && fx < W/2 + 120 && fy > H/2 - 180 && fy < H/2 + 120) {
+            fx += rand(-180, 180);
+            fy += rand(-120, 120);
+            fx = Math.max(30, Math.min(W - 30, fx));
+            fy = Math.max(40, Math.min(H - 240, fy));
+        }
+
+        f.loc(fx, fy);
+        f.alpha = rand(0.12, 0.45);
+        f.sca(rand(0.7, 1.15));
+
+        // 闪烁
+        f.animate({
+            props: { alpha: rand(0.08, 0.55) },
+            time: rand(0.8, 1.8),
+            rewind: true,
+            loop: true,
+            ease: "sineInOut"
+        });
+
+        // 漂移
+        const baseX = f.x;
+        const baseY = f.y;
+        f.animate({
+            props: {
+                x: baseX + rand(-80, 80),
+                y: baseY + rand(-50, 50)
+            },
+            time: rand(3.0, 5.5),
+            rewind: true,
+            loop: true,
+            ease: "sineInOut"
+        });
+
+        // 微微呼吸
+        f.animate({
+            props: { scale: f.scale * rand(0.92, 1.12) },
+            time: rand(1.6, 3.0),
+            rewind: true,
+            loop: true,
+            ease: "sineInOut"
+        });
+
+        return f;
+    }
+    
+    for (let i = 0; i < 18; i++) {
+        makeAmbientFirefly();
+    }
+
+    // ---------------------------------
+    // PET HOLDER
+    // ---------------------------------
+    const petHolder = new Container().addTo(playLayer);
+    petHolder.centerReg().loc(W/2 + 20, H/2 - 50);
+
+    petHolderBaseX = petHolder.x;
+    petHolderBaseY = petHolder.y;
+    petHolderBaseScale = 1;
+
+    let pet = new Pic("egg_idle.png")
+        .centerReg(petHolder);
+
+    let idleRig = null;
+
+    let backWingPivot = null;
+    let frontWingPivot = null;
+
+    let idleBackWing = null;
+    let idleBody = null;
+    let idleFrontWing = null;
+    let idleLookID = null;
+
+    let wingFlapMode = false;
+    let wingPulseTimeout = null;
+    // ---------------------------------
+    // HATCH HINT
+    // ---------------------------------
+    const hatchHint = new Label({
+        text: "Tap egg to hatch",
+        size: 30,
+        color: white,
+        bold: true,
+        backgroundColor: "#12323b",
+        corner: 20,
+        paddingH: 24,
+        paddingV: 14
+    }).pos(0, 340, CENTER, TOP, uiLayer);
+
+    hatchHint.alp(.9);
+
+    hatchHint.animate({
+        props:{alpha:.45},
+        time:1,
+        rewind:true,
+        loop:true
+    });
+
+    function showHatchHint() {
+        if (!hatchHint || hatchHint.disposed) return;
+        hatchHint.alpha = 0.9;
+        hatchHint.visible = true;
+    }
+
+    function hideHatchHint() {
+        if (!hatchHint || hatchHint.disposed) return;
+        hatchHint.visible = false;
+        hatchHint.alpha = 0;
+    }
+
+    if (gameData.stage !== "egg") {
+        hideHatchHint();
+    }
+
+    // 让蛋本身也能点击孵化
+    pet.tap(() => {
+        if (gameData.stage === "egg") hatch();
+    });
+
+    // restart button
+    const resetBtn = new Label({
+        text: "Reset",
+        size: 18,
+        color: white,
+        bold: true,
+        backgroundColor: "#12323b",
+        corner: 16,
+        paddingH: 16,
+        paddingV: 10
+    }).pos(18, 18, RIGHT, TOP, uiLayer);
+
+    resetBtn.alp(0.78);
+
+    resetBtn.tap(() => {
+        resetGame();
+    });
+
+    // 手机许可motion btn
+    const motionBtn = new Label({
+        text: "Enable Motion",
+        // size: 30,
+        size: 18,
+        color: white,
+        bold: true,
+        backgroundColor: "#12323b",
+        corner: 16,
+        paddingH: 16,
+        paddingV: 10
+    }).pos(120, 18, RIGHT, TOP, uiLayer);
+
+    motionBtn.alp(0.78);
+
+    motionBtn.tap(async () => {
+        startBGM();
+        const ok = await requestMotionPermissionIfNeeded();
+        if (ok) motionBtn.dispose();
+    });
+
+    // ---------------------------------
+    // DRAGON SETTING
+    // ---------------------------------
+    function setPetPic(file, keepScale=true) {
+        let x = 0;
+        let y = 0;
+        let r = 0;
+
+        if (idleRig) {
+            x = idleRig.x;
+            y = idleRig.y;
+            r = idleRig.rotation;
+
+            stopWingFlap();
+            idleRig.stopAnimate();
+            idleRig.dispose();
+
+            idleRig = null;
+            backWingPivot = null;
+            frontWingPivot = null;
+            idleBackWing = null;
+            idleBody = null;
+            idleFrontWing = null;
+
+        } else if (pet) {
+            x = pet.x;
+            y = pet.y;
+            r = pet.rotation;
+
+            pet.stopAnimate();
+            pet.dispose();
+        }
+
+        const useScale = keepScale ? petBaseScale : 1;
+
+        pet = new Pic(file)
+            .centerReg(petHolder)
+            .loc(x, y)
+            .sca(useScale);
+
+        pet.scaleX = useScale;
+        pet.scaleY = useScale;
+        pet.rotation = r;
+
+        currentPetPic = file;
+
+        pet.tap(() => {
+            if (gameData.stage === "egg") {
+                hatch();
+            } else {
+                petTapHappy();
+            }
+        });
+
+        S.update();
+    }
+
+    function buildIdleRig() {
+        let x = 0;
+        let y = 0;
+        let r = 0;
+
+        if (pet) {
+            x = pet.x;
+            y = pet.y;
+            r = pet.rotation;
+
+            pet.stopAnimate();
+            pet.dispose();
+            pet = null;
+        }
+
+        if (idleRig) {
+            x = idleRig.x;
+            y = idleRig.y;
+            r = idleRig.rotation;
+
+            idleRig.stopAnimate();
+            idleRig.dispose();
+            idleRig = null;
+        }
+
+        // rig 本身像原来的 pet 一样放
+        idleRig = new Container().addTo(petHolder);
+        idleRig.centerReg(petHolder).loc(x, y);
+        idleRig.rotation = r;
+
+        // -----------------------------
+        // 背面翅膀 pivot
+        // -----------------------------
+        backWingPivot = new Container().addTo(idleRig);
+        backWingPivot.loc(WING_OFFSET_X, WING_OFFSET_Y);
+
+        idleBackWing = new Pic("dragon_idle_back_wing.png")
+            .centerReg(backWingPivot)
+            .loc(-WING_OFFSET_X, -WING_OFFSET_Y)
+            .sca(petBaseScale);
+
+        // -----------------------------
+        // 身体
+        // -----------------------------
+        idleBody = new Pic("dragon_idle_body.png")
+            .centerReg(idleRig)
+            .sca(petBaseScale);
+
+        // -----------------------------
+        // 正面翅膀 pivot
+        // -----------------------------
+        frontWingPivot = new Container().addTo(idleRig);
+        frontWingPivot.loc(WING_OFFSET_X, WING_OFFSET_Y);
+
+        idleFrontWing = new Pic("dragon_idle_front_wing.png")
+            .centerReg(frontWingPivot)
+            .loc(-WING_OFFSET_X, -WING_OFFSET_Y)
+            .sca(petBaseScale);
+
+        pet = idleRig;
+        currentPetPic = "dragon_idle.png";
+
+        idleRig.tap(() => {
+            petTapHappy();
+        });
+
+        idleRig.setChildIndex(backWingPivot, 0);
+        idleRig.setChildIndex(idleBody, 1);
+        idleRig.setChildIndex(frontWingPivot, 2);
+
+        // 身体左右动动
+        idleBody.animate({
+            props: { rotation: 1.2 },
+            time: 1.9,
+            rewind: true,
+            loop: true,
+            ease: "sineInOut"
+        });
+
+        // 偶尔前倾看看
+        if (!idleLookID) {
+            idleLookID = interval(7, () => {
+                if (!idleRig) return;
+                if (currentMood !== "idle") return;
+
+                idleRig.animate({
+                    props: { rotation: 1.5 },
+                    time: 0.22,
+                    rewind: true,
+                    ease: "sineInOut"
+                });
+            });
+        }
+
+        startWingFlap();
+        S.update();
+    }
+
+    function setIdleBodyPic(file) {
+        if (!idleRig || !idleBody) return;
+
+        const oldX = idleBody.x;
+        const oldY = idleBody.y;
+        const oldScaleX = idleBody.scaleX;
+        const oldScaleY = idleBody.scaleY;
+        const oldRotation = idleBody.rotation;
+
+        // 记住当前层级索引，防止新 body 跑到最上层
+        const bodyIndex = idleRig.getChildIndex(idleBody);
+
+        idleBody.dispose();
+
+        idleBody = new Pic(file)
+            .centerReg(idleRig)
+            .loc(oldX, oldY)
+            .sca(petBaseScale);
+
+        idleBody.scaleX = oldScaleX;
+        idleBody.scaleY = oldScaleY;
+        idleBody.rotation = oldRotation;
+
+        idleRig.addChildAt(idleBody, bodyIndex);
+
+        S.update();
+    }
+
+    function idleRigBlinkOn() {
+        setIdleBodyPic("dragon_idle_body_blink.png");
+    }
+
+    function idleRigBlinkOff() {
+        setIdleBodyPic("dragon_idle_body.png");
+    }
+
+    function stopWingFlap() {
+        wingFlapMode = false;
+
+        if (wingPulseTimeout) {
+            wingPulseTimeout.clear();
+            wingPulseTimeout = null;
+        }
+
+        if (backWingPivot) backWingPivot.stopAnimate();
+        if (frontWingPivot) frontWingPivot.stopAnimate();
+    }
+
+    function startWingFlap() {
+        if (!idleRig || !backWingPivot || !frontWingPivot) return;
+
+        wingFlapMode = true;
+
+        backWingPivot.stopAnimate();
+        frontWingPivot.stopAnimate();
+
+        backWingPivot.rotation = rand(-1.5, 1.5, false);
+        frontWingPivot.rotation = rand(-1.5, 1.5, false);
+
+        // 基础同步慢扇
+        backWingPivot.animate({
+            props: { rotation: -8 },
+            time: 1.25,
+            rewind: true,
+            loop: true,
+            ease: "sineInOut"
+        });
+
+        frontWingPivot.animate({
+            props: { rotation: 8 },
+            time: 1.25,
+            rewind: true,
+            loop: true,
+            ease: "sineInOut"
+        });
+
+        scheduleWingPulse();
+    }
+
+    function scheduleWingPulse() {
+        if (wingPulseTimeout) wingPulseTimeout.clear();
+        if (!wingFlapMode) return;
+
+        // 1~3 秒之间随机来一次双击式快速扇翅
+        wingPulseTimeout = timeout(rand(1, 3, false), () => {
+            if (!wingFlapMode) return;
+            if (currentMood !== "idle") {
+                scheduleWingPulse();
+                return;
+            }
+            if (!backWingPivot || !frontWingPivot) {
+                scheduleWingPulse();
+                return;
+            }
+
+            // 先停掉当前慢扇
+            backWingPivot.stopAnimate();
+            frontWingPivot.stopAnimate();
+
+            // 从比较自然的中间角度开始
+            backWingPivot.rotation = rand(-2, 0, false);
+            frontWingPivot.rotation = rand(0, 2, false);
+
+            // -------- 第一次：大一点、慢一点 --------
+            backWingPivot.animate({
+                props: { rotation: -16 },
+                time: 0.18,
+                ease: "sineOut",
+                call: () => {
+                    backWingPivot.animate({
+                        props: { rotation: -4 },
+                        time: 0.14,
+                        ease: "sineInOut",
+                        call: () => {
+
+                            // -------- 第二次：小一点、快一点 --------
+                            backWingPivot.animate({
+                                props: { rotation: -11 },
+                                time: 0.11,
+                                ease: "sineOut",
+                                call: () => {
+                                    backWingPivot.animate({
+                                        props: { rotation: 0 },
+                                        time: 0.12,
+                                        ease: "sineInOut",
+                                        call: () => {
+                                            // 回到基础慢扇
+                                            backWingPivot.animate({
+                                                props: { rotation: -8 },
+                                                time: 1.25,
+                                                rewind: true,
+                                                loop: true,
+                                                ease: "sineInOut"
+                                            });
+                                        }
+                                    });
+                                }
+                            });
+                        }
+                    });
+                }
+            });
+
+            frontWingPivot.animate({
+                props: { rotation: 16 },
+                time: 0.18,
+                ease: "sineOut",
+                call: () => {
+                    frontWingPivot.animate({
+                        props: { rotation: 4 },
+                        time: 0.14,
+                        ease: "sineInOut",
+                        call: () => {
+
+                            frontWingPivot.animate({
+                                props: { rotation: 11 },
+                                time: 0.11,
+                                ease: "sineOut",
+                                call: () => {
+                                    frontWingPivot.animate({
+                                        props: { rotation: 0 },
+                                        time: 0.12,
+                                        ease: "sineInOut",
+                                        call: () => {
+                                            frontWingPivot.animate({
+                                                props: { rotation: 8 },
+                                                time: 1.25,
+                                                rewind: true,
+                                                loop: true,
+                                                ease: "sineInOut"
+                                            });
+
+                                            // 这一轮 pulse 结束后，再安排下一次
+                                            scheduleWingPulse();
+                                        }
+                                    });
+                                }
+                            });
+                        }
+                    });
+                }
+            });
+        });
+    }
+
+    function getBlinkPic() {
+        switch (currentPetPic) {
+            case "dragon_dirty.png":
+                return "dragon_dirty_blink.png";
+            case "dragon_look.png":
+                return "dragon_look_blink.png";
+            case "dragon_hungry.png":
+                return "dragon_hungry_blink.png";
+            case "dragon_unhappy.png":
+                return "dragon_unhappy_blink.png";
+            case "dragon_idle.png":
+                return "dragon_idle_eye_closed.png";
+            default:
+                return null;
+        }
+    }
+
+    function startHolderBreathing(mode="awake") {
+        if (gameData.stage !== "dragon") return;
+        if (breathingMode === mode) return; // 模式没变，不要重启
+
+        breathingMode = mode;
+
+        petHolder.stopAnimate();
+
+        // 先回到基准
+        petHolder.x = petHolderBaseX;
+        petHolder.y = petHolderBaseY;
+        petHolder.scaleX = petHolderBaseScale;
+        petHolder.scaleY = petHolderBaseScale;
+
+        if (mode === "none") return;
+
+        let sx = petHolderBaseScale * 1.01;
+        let sy = petHolderBaseScale * 0.992;
+        let y  = petHolderBaseY - 1.2;
+        let time = 1.8;
+
+        if (mode === "sleep") {
+            sx = petHolderBaseScale * 1.016;
+            sy = petHolderBaseScale * 0.996;
+            y  = petHolderBaseY - 1.2;
+            time = 2.4;
+        }
+
+        petHolder.animate({
+            props: {
+                scaleX: sx,
+                scaleY: sy,
+                y: y
+            },
+            time: time,
+            rewind: true,
+            loop: true,
+            ease: "sineInOut"
+        });
+    }
+
+    function petTapHappy() {
+        if (gameData.stage !== "dragon") return;
+
+        markInteraction();
+        playRandomDragon(0.35);
+        showTempMood("dragon_happy.png", "happy", 1.0);
+
+        timeout(0.02, () => {
+            pet.animate({
+                props:{
+                    scaleX: petBaseScale * 1.03,
+                    scaleY: petBaseScale * 1.03
+                },
+                time:0.12,
+                rewind:true
+            });
+        });
+    }
+
+    function markInteraction() {
+        lastInteractionTime = Date.now();
+        saveGame();
+        startBGM();
+
+        // 如果在睡觉，互动后醒来
+        if (gameData.stage === "dragon" && currentMood === "sleep") {
+            currentMood = "idle";
+            if (sleepNudgeID) {
+                sleepNudgeID.clear();
+                sleepNudgeID = null;
+            }
+            updatePetState();
+        }
+    }
+
+    function showTempMood(file, moodName, duration=1.2) {
+        if (gameData.stage !== "dragon") return;
+
+        if (tempMoodTimeout) tempMoodTimeout.clear();
+
+        currentMood = moodName;
+
+        if (currentPetPic !== file) {
+            setPetPic(file);
+        }
+
+        // happy / look 仍然属于清醒状态，不要反复重启呼吸
+        startHolderBreathing("awake");
+
+        tempMoodTimeout = timeout(duration, () => {
+            updatePetState();
+        });
+    }
+
+    function updatePetState() {
+        if (gameData.stage !== "dragon") return;
+
+        let nextMood = currentMood;
+        let nextPic = currentPetPic;
+        let nextBreathing = "awake";
+
+        // dizzy 优先级最高
+        if (currentMood === "dizzy") {
+            nextMood = "dizzy";
+            nextPic = "dragon_dizzy.png";
+            nextBreathing = "none";
+        }
+        // sleep 次高
+        else if (currentMood === "sleep") {
+            nextMood = "sleep";
+            nextPic = "dragon_sleep.png";
+            nextBreathing = "sleep";
+        }
+        // 平时状态判断
+        else if (gameData.hunger < LOW_THRESHOLD) {
+            nextMood = "hungry";
+            nextPic = "dragon_hungry.png";
+            nextBreathing = "awake";
+        } 
+        else if (gameData.clean < LOW_THRESHOLD) {
+            nextMood = "dirty";
+            nextPic = "dragon_dirty.png";
+            nextBreathing = "awake";
+        } 
+        else if (gameData.fun < LOW_THRESHOLD) {
+            nextMood = "unhappy";
+            nextPic = "dragon_unhappy.png";
+            nextBreathing = "awake";
+        } 
+        else {
+            nextMood = "idle";
+            nextPic = "dragon_idle.png";
+            nextBreathing = "awake";
+        }
+
+        // 只有真的变了才换图
+        if (nextPic !== currentPetPic) {
+            currentMood = nextMood;
+
+            if (nextPic === "dragon_idle.png") {
+                buildIdleRig();
+            } else {
+                setPetPic(nextPic);
+            }
+        } else {
+            currentMood = nextMood;
+        }
+
+        // 呼吸模式只有变的时候才重启
+        startHolderBreathing(nextBreathing);
+    }
+    // ---------------------------------
+    // BOTTOM STATUS ORBS (also buttons)
+    // ---------------------------------
+    const statusRow = new Container(620, 160)
+        .pos(0, -150, CENTER, BOTTOM, uiLayer)
+        .alp(0);
+
+    const foodStatus = makeStatusOrb("food_icon.png", "#ffd86b", gameData.hunger, "feed");
+    foodStatus.centerReg().loc(110, 80, statusRow);
+
+    const cleanStatus = makeStatusOrb("water_icon.png", "#7dc7ff", gameData.clean, "clean");
+    cleanStatus.centerReg().loc(310, 80, statusRow);
+
+    const funStatus = makeStatusOrb("butterfly_icon.png", "#ff9aa9", gameData.fun, "play");
+    funStatus.centerReg().loc(510, 80, statusRow);
+
+    function makeStatusOrb(iconFile, glowColor, value, actionType) {
+        const c = new Container(140, 140);
+
+        c.actionType = actionType;
+        c.isWarning = false;
+
+        new Circle(70, glowColor).alp(.40).center(c);
+        new Circle(48, glowColor).alp(.60).center(c);
+
+        new Pic(iconFile)
+            .sca(0.5)
+            .centerReg(c)
+            .mov(-2, -2);
+
+        c.valueLabel = new Label({
+            text: value + "%",
+            size: 24,
+            color: white,
+            bold: true
+        }).pos(0, 34, CENTER, CENTER, c);
+
+        c.cur("pointer");
+
+        c.tap(() => {
+            if (gameData.stage === "egg") {
+                hatch();
+                return;
+            }
+
+            markInteraction();
+
+            if (actionType === "feed") {
+                const wasLow = gameData.hunger < LOW_THRESHOLD;
+                gameData.hunger = Math.min(100, gameData.hunger + 18);
+                updateStatusOrbs();
+                pressOrb(c);
+                feedAnim();
+
+                if (!wasLow) {
+                    showTempMood("dragon_happy.png", "happy", 1.0);
+                } else {
+                    updatePetState();
+                }
+
+            } else if (actionType === "clean") {
+                const wasLow = gameData.clean < LOW_THRESHOLD;
+                gameData.clean = Math.min(100, gameData.clean + 18);
+                updateStatusOrbs();
+                pressOrb(c);
+                cleanAnim();
+
+                if (!wasLow) {
+                    showTempMood("dragon_happy.png", "happy", 1.0);
+                } else {
+                    updatePetState();
+                }
+
+            } else if (actionType === "play") {
+                if (butterflyBusy) return;
+
+                pressOrb(c);
+                playAnim();
+            }
+        });
+
+        return c;
+    }
+
+    function pressOrb(orb) {
+        orb.stopAnimate();
+
+        orb.animate({
+            props:{scale:1.08},
+            time:.1,
+            rewind:true,
+            ease:"sineInOut",
+            call: () => {
+                if (orb.isWarning) {
+                    startOrbWarning(orb);
+                } else {
+                    orb.scale = 1;
+                }
+            }
+        });
+    }
+
+    function startOrbWarning(orb) {
+        if (orb.isWarning) return;
+        orb.isWarning = true;
+
+        orb.stopAnimate();
+        orb.scale = 1;
+
+        orb.animate({
+            props: { scale: 1.08 },
+            time: 0.55,
+            rewind: true,
+            loop: true,
+            ease: "sineInOut"
+        });
+    }
+
+    function stopOrbWarning(orb) {
+        if (!orb.isWarning) return;
+        orb.isWarning = false;
+
+        orb.stopAnimate();
+        orb.scale = 1;
+    }
+
+    function updateStatusOrbs() {
+        foodStatus.valueLabel.text = gameData.hunger + "%";
+        cleanStatus.valueLabel.text = gameData.clean + "%";
+        funStatus.valueLabel.text = gameData.fun + "%";
+
+        if (gameData.hunger < LOW_THRESHOLD) {
+            startOrbWarning(foodStatus);
+        } else {
+            stopOrbWarning(foodStatus);
+        }
+
+        if (gameData.clean < LOW_THRESHOLD) {
+            startOrbWarning(cleanStatus);
+        } else {
+            stopOrbWarning(cleanStatus);
+        }
+
+        if (gameData.fun < LOW_THRESHOLD) {
+            startOrbWarning(funStatus);
+        } else {
+            stopOrbWarning(funStatus);
+        }
+
+        saveGame();
+        S.update();
+    }
+
+    function showStatusRow() {
+        statusRow.animate({
+            props: {
+                y: H - 200,   // 让它回到原本底部位置附近
+                alpha: 1
+            },
+            time: 0.45,
+            ease: "backOut"
+        });
+    }
+    
+    // ---------------------------------
+    // LOCAL SAVE
+    // ---------------------------------
+    function saveGame() {
+        const saveData = {
+            gameData: {
+                stage: gameData.stage,
+                hunger: gameData.hunger,
+                clean: gameData.clean,
+                fun: gameData.fun
+            },
+            lastInteractionTime: lastInteractionTime,
+            savedAt: Date.now()
+        };
+
+        localStorage.setItem(SAVE_KEY, JSON.stringify(saveData));
+    }
+
+    function loadGame() {
+        const raw = localStorage.getItem(SAVE_KEY);
+        if (!raw) return;
+
+        try {
+            const saveData = JSON.parse(raw);
+            if (!saveData || !saveData.gameData) return;
+
+            gameData.stage = saveData.gameData.stage ?? "egg";
+            gameData.hunger = saveData.gameData.hunger ?? 90;
+            gameData.clean = saveData.gameData.clean ?? 90;
+            gameData.fun = saveData.gameData.fun ?? 90;
+            lastInteractionTime = saveData.lastInteractionTime ?? Date.now();
+        } catch (e) {
+            console.log("Save load failed:", e);
+        }
+    }
+
+    function restoreSceneFromSave() {
+        updateStatusOrbs();
+
+        if (gameData.stage === "dragon") {
+            hideHatchHint();
+
+            if (pet) {
+                pet.dispose();
+            }
+
+            petBaseScale = 1.02;
+            currentMood = "idle";
+            currentPetPic = "dragon_idle.png";
+
+            pet = new Pic("dragon_idle.png")
+                .centerReg(petHolder);
+
+            pet.scaleX = petBaseScale;
+            pet.scaleY = petBaseScale;
+
+            pet.tap(() => {
+                petTapHappy();
+            });
+
+            showStatusRow();
+            buildIdleRig();
+            updatePetState();
+            startHolderBreathing("awake");
+            startBlink();
+            startNeedDecay();
+            startSleepWatcher();
+            startShakeDetection();
+        } else {
+            showHatchHint();
+        }
+    }
+
+    function resetGame() {
+        localStorage.removeItem(SAVE_KEY);
+        location.reload();
+    }
+    // ---------------------------------
+    // HATCH
+    // ---------------------------------
+    function hatch() {
+        if (gameData.stage !== "egg") return;
+
+        if (hatchHint && !hatchHint.disposed) {
+            hatchHint.stopAnimate();
+            hatchHint.animate({
+                props:{alpha:0},
+                time:.2,
+                call: () => hatchHint.dispose()
+            });
+        }
+
+        markInteraction();
+        playOnce("crack.mp3", 0.75);
+        timeout(1.1, () => {
+            playOnce("dragon01.mp3", 0.75);
+        });
+        
+        pet.reg(pet.width/2, pet.height*0.62);
+        pet.loc(0, 40, petHolder);
+
+        pet.animate({
+            props:{rotation:12},
+            time:0.08,
+            rewind:true,
+            loop:5
+        });
+
+        timeout(0.55, () => {
+            pet.dispose();
+            pet = new Pic("egg_crack.png")
+                .centerReg(petHolder);
+
+            S.update();
+        });
+
+        timeout(0.75, () => {
+            pet.dispose();
+            pet = new Pic("egg_open1.png")
+                .centerReg(petHolder);
+
+            S.update();
+        });
+
+        timeout(1.15, () => {
+            pet.dispose();
+            pet = new Pic("egg_open2.png")
+                .centerReg(petHolder);
+
+            S.update();
+        });
+
+        timeout(1.45, () => {
+            pet.dispose();
+
+            pet = new Pic("dragon_idle.png")
+                .centerReg(petHolder)
+                .alp(0);
+
+            petBaseScale = 1.02;
+            pet.scaleX = petBaseScale;
+            pet.scaleY = petBaseScale;
+
+            pet.tap(() => {
+                petTapHappy();
+            });
+
+            pet.animate({
+                props:{alpha:1},
+                time:.35
+            });
+
+            currentPetPic = "dragon_idle.png";
+            gameData.stage = "dragon";
+            currentMood = "idle";
+            lastInteractionTime = Date.now();
+
+            saveGame();
+
+            showStatusRow();
+            startHolderBreathing("awake");
+            startBlink();
+            startNeedDecay();
+            startSleepWatcher();
+            startShakeDetection();
+
+            timeout(.4, () => {
+                buildIdleRig();
+            });
+
+            S.update();
+        });
+    }
+
+    // ---------------------------------
+    // BLINK
+    // ---------------------------------
+    let blinkLoopStarted = false;
+
+    function startBlink() {
+        if (blinkLoopStarted) return;
+        blinkLoopStarted = true;
+        scheduleNextBlink();
+    }
+
+    function scheduleNextBlink() {
+        timeout(rand(2.4, 4.8, false), () => {
+            if (gameData.stage !== "dragon") return;
+            blink();
+            scheduleNextBlink();
+        });
+    }
+    function blink() {
+        if (gameData.stage !== "dragon") return;
+        if (currentMood === "sleep" || currentMood === "dizzy") return;
+
+        // idle 分层 blink：只换 body
+        if (currentMood === "idle" && idleRig) {
+            idleRigBlinkOn();
+
+            timeout(0.11, () => {
+                idleRigBlinkOff();
+            });
+            return;
+        }
+
+        // 其他状态维持原本单图 blink
+        const blinkPic = getBlinkPic();
+        if (!blinkPic) return;
+
+        let basePic = currentPetPic;
+        let x = pet.x;
+        let y = pet.y;
+        let s = pet.scale;
+        let r = pet.rotation;
+
+        setPetPic(blinkPic);
+        pet.loc(x, y);
+        pet.sca(s);
+        pet.rotation = r;
+
+        timeout(0.11, () => {
+            setPetPic(basePic);
+            pet.loc(x, y);
+            pet.sca(s);
+            pet.rotation = r;
+        });
+    }
+
+    // ---------------------------------
+    // FEED
+    // ---------------------------------
+    function feedAnim() {
+        playOnce("eat.mp3", 0.4);
+
+        const f = new Pic("food.png")
+            .sca(0.5)
+            .rot(45)
+            .centerReg(playLayer)
+            .loc(W/2 - 140, H - 220);
+
+        f.animate({
+            props:{x:petHolder.x + 10, y:petHolder.y - 20, alpha:0},
+            time:0.5,
+            ease:"quadOut",
+            call:() => f.dispose()
+        });
+
+        pet.animate({
+            props:{
+                scaleX: petBaseScale * 1.03,
+                scaleY: petBaseScale * 1.03
+            },
+            time:.12,
+            rewind:true
+        });
+
+        timeout(0.3, () => {
+            updatePetState();
+        });
+    }
+
+    // ---------------------------------
+    // CLEAN
+    // ---------------------------------
+    function cleanAnim() {
+        playRandomBubble(0.4);
+
+        loop(10, () => {
+            const b = new Circle(rand(12,24), white.toAlpha(0.45), white, 2)
+                .loc(rand(W/2 - 110, W/2 + 110), rand(H/2 + 140, H/2 + 260), playLayer);
+
+            b.animate({
+                props:{y:b.y - rand(120,220), alpha:0},
+                time:rand(.8,1.2),
+                call:() => b.dispose()
+            });
+        });
+
+        timeout(0.3, () => {
+            updatePetState();
+        });
+    }
+
+    // ---------------------------------
+    // PLAY
+    // ---------------------------------    
+    function playAnim() {
+        if (gameData.stage !== "dragon") return;
+        if (butterflyBusy) return;
+
+        playOnce("magic.mp3", 0.5);
+
+        butterflyBusy = true;
+        butterflyFlightStopped = false;
+        butterflyElapsed = 0;
+
+        gameData.fun = Math.min(100, gameData.fun + 50);
+        updateStatusOrbs();
+
+        markInteraction();
+        showTempMood("dragon_look.png", "look", 5.6); // 龙抬头看的时间
+
+        const areaCenterX = petHolder.x;
+        const areaCenterY = petHolder.y - 185;
+
+        if (activeButterfly) {
+            activeButterfly.dispose();
+            activeButterfly = null;
+        }
+
+        const t = new Pic("butterfly.png")
+            .sca(0.42)
+            .centerReg(playLayer)
+            .loc(areaCenterX + 30, areaCenterY);
+
+        activeButterfly = t;
+
+        // 让蝴蝶本身也有一点活性
+        t.animate({
+            props: { scale: 0.46 },
+            time: 0.45,
+            rewind: true,
+            loop: true,
+            ease: "sineInOut"
+        });
+
+        t.animate({
+            props: { alpha: 0.82 },
+            time: 0.35,
+            rewind: true,
+            loop: true,
+            ease: "sineInOut"
+        });
+
+        flutterToNextPoint(t, areaCenterX, areaCenterY);
+    }
+
+    function flutterToNextPoint(butterfly, cx, cy) {
+        if (!butterfly || butterflyFlightStopped) return;
+
+        // 飞行总时长，超过后开始落下
+        if (butterflyElapsed > 3) {
+            landButterfly(butterfly);
+            //小龙在蝴蝶停在头上的时候开心
+            timeout(1.2, () => {
+                showTempMood("dragon_happy.png", "happy", 0.4);
+            });
+            
+            return;
+        }
+
+        const startX = butterfly.x;
+        const startY = butterfly.y;
+
+        const endX = cx + rand(-110, 110) + tiltX * 22;
+        const rawEndY = cy + rand(-65, 45) + tiltY * 14;
+        const endY = Math.min(rawEndY, petHolder.y - 95); // 保持在龙上方
+
+        // 中间控制点：决定弧线弯曲方向和力度
+        const midX = (startX + endX) / 2 + rand(-45, 45);
+        const midY = Math.min((startY + endY) / 2 + rand(-55, 20), petHolder.y - 90);
+
+        const duration = rand(0.9, 1.5, false); // 每段飞行的快慢
+        butterflyElapsed += duration;
+
+        const startRot = butterfly.rotation || 0;
+        const steps = Math.round(duration * 60); // 每秒约60帧
+        let step = 0;
+
+        if (butterflyMotion) Ticker.remove(butterflyMotion);
+
+        butterflyMotion = () => {
+            step++;
+            const t = step / steps;
+
+            if (t >= 1) {
+                butterfly.x = endX;
+                butterfly.y = endY;
+
+                Ticker.remove(butterflyMotion);
+                butterflyMotion = null;
+
+                butterfly.animate({
+                    props: { rotation: rand(-8, 8) },
+                    time: rand(0.08, 0.16, false),
+                    ease: "sineInOut",
+                    call: () => {
+                        flutterToNextPoint(butterfly, cx, cy);
+                    }
+                });
+                return;
+            }
+
+            // ease让弧线不是匀速，更像活物
+            const e = t < 0.5
+                ? 2 * t * t
+                : 1 - Math.pow(-2 * t + 2, 2) / 2;
+
+            // 二次贝塞尔
+            const oneMinus = 1 - e;
+            butterfly.x =
+                oneMinus * oneMinus * startX +
+                2 * oneMinus * e * midX +
+                e * e * endX;
+
+            butterfly.y =
+                oneMinus * oneMinus * startY +
+                2 * oneMinus * e * midY +
+                e * e * endY;
+
+            // 用当前位置和上一点近似算朝向
+            const futureT = Math.min(1, e + 0.02);
+            const futureOneMinus = 1 - futureT;
+            const fx =
+                futureOneMinus * futureOneMinus * startX +
+                2 * futureOneMinus * futureT * midX +
+                futureT * futureT * endX;
+
+            const fy =
+                futureOneMinus * futureOneMinus * startY +
+                2 * futureOneMinus * futureT * midY +
+                futureT * futureT * endY;
+
+            const dx = fx - butterfly.x;
+            butterfly.rotation = constrain(dx * 0.18, -16, 16);
+
+            // 轻微上下 flutter 感
+            butterfly.y += Math.sin(step * 0.35) * 0.8;
+        };
+
+        Ticker.add(butterflyMotion);
+    }
+
+    function landButterfly(butterfly) {
+        if (!butterfly) return;
+
+        butterflyFlightStopped = true;
+
+        butterfly.stopAnimate();
+
+        butterfly.animate({
+            props: {
+                x: petHolder.x - 70,   // 这里保留现在调好的落点
+                y: petHolder.y - 70,
+                scale: 0.28,
+                rotation: 0,
+                alpha: 1
+            },
+            time: 0.8,
+            ease: "sineInOut",
+            call: () => {
+                timeout(0.5, () => {
+                    butterfly.animate({
+                        props: {
+                            alpha: 0,
+                            scale: 0
+                        },
+                        time: 0.3,
+                        call: () => {
+                            butterfly.dispose();
+                            if (activeButterfly === butterfly) activeButterfly = null;
+                            butterflyBusy = false;
+                            updatePetState();
+                        }
+                    });
+                });
+            }
+        });
+    }
+    // ---------------------------------
+    // Dragon Need Decay
+    // ---------------------------------
+    let needDecayID = null;
+    let sleepWatcherID = null;
+    let sleepNudgeID = null;
+
+    function startNeedDecay() {
+        if (needDecayID) return;
+        needDecayID = interval(NEED_DECAY_INTERVAL, () => {
+            if (gameData.stage !== "dragon") return;
+            if (currentMood === "sleep") return;
+            if (butterflyBusy) return;
+
+            gameData.hunger = Math.max(0, gameData.hunger - HUNGER_DECAY);
+            gameData.clean = Math.max(0, gameData.clean - CLEAN_DECAY);
+            gameData.fun = Math.max(0, gameData.fun - FUN_DECAY);
+
+            updateStatusOrbs();
+            updatePetState();
+        });
+    }
+
+    // ---------------------------------
+    // Dragon Sleep
+    // ---------------------------------
+    function startSleepWatcher() {
+        if (sleepWatcherID) return;
+
+        sleepWatcherID = interval(2, () => {
+            if (gameData.stage !== "dragon") return;
+            if (currentMood === "dizzy") return;
+
+            const idleSeconds = (Date.now() - lastInteractionTime) / 1000;
+
+            if (idleSeconds > SLEEP_AFTER) {
+                if (currentMood !== "sleep") {
+                    currentMood = "sleep";
+                    updatePetState();
+
+                    if (!sleepNudgeID) {
+                        sleepNudgeID = interval(6, () => {
+                            if (gameData.stage !== "dragon") return;
+                            if (currentMood !== "sleep") return;
+                            if (!pet) return;
+
+                            pet.animate({
+                                props: { rotation: 1.5 },
+                                time: 0.2,
+                                rewind: true,
+                                ease: "sineInOut"
+                            });
+                        });
+                    }
+                }
+            } else {
+                if (sleepNudgeID && currentMood !== "sleep") {
+                    sleepNudgeID.clear();
+                    sleepNudgeID = null;
+                }
+            }
+        });
+    }
+    // ---------------------------------
+    // Dragon Shake Dizzy
+    // ---------------------------------
+    let shakeDetectionStarted = false;
+
+    function startShakeDetection() {
+        if (shakeDetectionStarted) return;
+        shakeDetectionStarted = true;
+
+        let lastShakeTime = 0;
+
+        window.addEventListener("devicemotion", (e) => {
+            if (gameData.stage !== "dragon") return;
+            if (!orientationEnabled) return; // 只有开了 motion 后才检测摇晃
+
+            const acc = e.accelerationIncludingGravity;
+            if (!acc) return;
+
+            const total = Math.abs(acc.x || 0) + Math.abs(acc.y || 0) + Math.abs(acc.z || 0);
+
+            if (total > 38 && Date.now() - lastShakeTime > 1800) {
+                lastShakeTime = Date.now();
+                markInteraction();
+                triggerDizzy();
+            }
+        });
+    }
+
+    function triggerDizzy() {
+        if (gameData.stage !== "dragon") return;
+
+        if (dizzyTimeout) dizzyTimeout.clear();
+
+        currentMood = "dizzy";
+        setPetPic("dragon_dizzy.png");
+        startHolderBreathing("none");
+
+        pet.animate({
+            props:{rotation:8},
+            time:0.08,
+            rewind:true,
+            loop:8
+        });
+
+        dizzyTimeout = timeout(1.5, () => {
+            updatePetState();
+        });
+    }
+
+    // ---------------------------------
+    // BG affected by phone Tilt
+    // ---------------------------------
+    async function requestMotionPermissionIfNeeded() {
+        if (motionPermissionRequested) return orientationEnabled;
+        motionPermissionRequested = true;
+
+        try {
+            if (
+                typeof DeviceOrientationEvent !== "undefined" &&
+                typeof DeviceOrientationEvent.requestPermission === "function"
+            ) {
+                const result = await DeviceOrientationEvent.requestPermission();
+                if (result !== "granted") {
+                    motionPermissionRequested = false;
+                    return false;
+                }
+            }
+
+            if (
+                typeof DeviceMotionEvent !== "undefined" &&
+                typeof DeviceMotionEvent.requestPermission === "function"
+            ) {
+                const result = await DeviceMotionEvent.requestPermission();
+                if (result !== "granted") {
+                    motionPermissionRequested = false;
+                    return false;
+                }
+            }
+
+            startTiltDetection();
+            return true;
+        } catch (e) {
+            console.log("Motion/orientation permission failed:", e);
+            motionPermissionRequested = false;
+            return false;
+        }
+    }
+
+    // 平滑tilt
+    let targetTiltX = 0;
+    let targetTiltY = 0;
+
+    function startTiltDetection() {
+        if (orientationEnabled) return;
+        orientationEnabled = true;
+
+        window.addEventListener("deviceorientation", (e) => {
+            let gamma = e.gamma || 0;
+            let beta = e.beta || 0;
+
+            gamma = Math.max(-20, Math.min(20, gamma));
+            beta = Math.max(-20, Math.min(20, beta));
+
+            targetTiltX = gamma / 20;
+            targetTiltY = (beta - 8) / 28;
+        });
+    }
+
+    Ticker.add(() => {
+        fxDrift += 0.01;
+        tiltX += (targetTiltX - tiltX) * 0.08;
+        tiltY += (targetTiltY - tiltY) * 0.08;
+        updateParallax();
+    });
+
+    // ---------------------------------
+    // SIMPLE BG PARALLAX
+    // ---------------------------------
+    S.on("stagemousemove", () => {
+        mouseParallaxX = -((F.mouseX - W/2) / (W/2)) * 0.35;
+        mouseParallaxY = -((F.mouseY - H/2) / (H/2)) * 0.15;
+    });
+
+    loadGame();
+    restoreSceneFromSave();
+    S.update();
+}
+
+// 注册 service worker
+if ("serviceWorker" in navigator) {
+    window.addEventListener("load", () => {
+        navigator.serviceWorker.register("./sw.js")
+            .then(() => console.log("Service worker registered"))
+            .catch((err) => console.log("Service worker failed:", err));
+    });
+}
+</script>
+</head>
+<body></body>
+</html>
