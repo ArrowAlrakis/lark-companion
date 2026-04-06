@@ -367,11 +367,51 @@ function ready() {
 
     motionBtn.alp(0.78);
 
-    motionBtn.tap(async () => {
+    motionBtn.tap(() => {
         startBGM();
-        const ok = await requestMotionPermissionIfNeeded();
-        if (ok) motionBtn.dispose();
+
+        const ask = new PermissionAsk((yes) => {
+            if (!yes) return;
+
+            setupMotionSensors();
+            motionBtn.dispose();
+        }, "deviceorientation");
     });
+
+    function setupMotionSensors() {
+        if (orientationEnabled) return;
+        orientationEnabled = true;
+
+        // tilt / orientation
+        F.on("deviceorientation", e => {
+            let gamma = e.rotation.y || 0; // 左右倾斜
+            let beta = e.rotation.x || 0;  // 前后倾斜
+
+            gamma = Math.max(-20, Math.min(20, gamma));
+            beta = Math.max(-20, Math.min(20, beta));
+
+            targetTiltX = gamma / 20;
+            targetTiltY = (beta - 8) / 28;
+        });
+
+        // shake / motion
+        let lastShakeTime = 0;
+
+        F.on("devicemotion", e => {
+            if (gameData.stage !== "dragon") return;
+
+            const ax = e.acceleration.x || 0;
+            const ay = e.acceleration.y || 0;
+            const az = e.acceleration.z || 0;
+            const total = Math.abs(ax) + Math.abs(ay) + Math.abs(az);
+
+            if (total > 38 && Date.now() - lastShakeTime > 1800) {
+                lastShakeTime = Date.now();
+                markInteraction();
+                triggerDizzy();
+            }
+        });
+    }
 
     // ---------------------------------
     // DRAGON SETTING
@@ -1113,7 +1153,7 @@ function ready() {
             startBlink();
             startNeedDecay();
             startSleepWatcher();
-            startShakeDetection();
+
         } else {
             showHatchHint();
         }
@@ -1210,7 +1250,7 @@ function ready() {
             startBlink();
             startNeedDecay();
             startSleepWatcher();
-            startShakeDetection();
+
 
             timeout(.4, () => {
                 buildIdleRig();
@@ -1584,29 +1624,6 @@ function ready() {
     // ---------------------------------
     let shakeDetectionStarted = false;
 
-    function startShakeDetection() {
-        if (shakeDetectionStarted) return;
-        shakeDetectionStarted = true;
-
-        let lastShakeTime = 0;
-
-        window.addEventListener("devicemotion", (e) => {
-            if (gameData.stage !== "dragon") return;
-            if (!orientationEnabled) return; // 只有开了 motion 后才检测摇晃
-
-            const acc = e.accelerationIncludingGravity;
-            if (!acc) return;
-
-            const total = Math.abs(acc.x || 0) + Math.abs(acc.y || 0) + Math.abs(acc.z || 0);
-
-            if (total > 38 && Date.now() - lastShakeTime > 1800) {
-                lastShakeTime = Date.now();
-                markInteraction();
-                triggerDizzy();
-            }
-        });
-    }
-
     function triggerDizzy() {
         if (gameData.stage !== "dragon") return;
 
@@ -1631,61 +1648,10 @@ function ready() {
     // ---------------------------------
     // BG affected by phone Tilt
     // ---------------------------------
-    async function requestMotionPermissionIfNeeded() {
-        if (motionPermissionRequested) return orientationEnabled;
-        motionPermissionRequested = true;
-
-        try {
-            if (
-                typeof DeviceOrientationEvent !== "undefined" &&
-                typeof DeviceOrientationEvent.requestPermission === "function"
-            ) {
-                const result = await DeviceOrientationEvent.requestPermission();
-                if (result !== "granted") {
-                    motionPermissionRequested = false;
-                    return false;
-                }
-            }
-
-            if (
-                typeof DeviceMotionEvent !== "undefined" &&
-                typeof DeviceMotionEvent.requestPermission === "function"
-            ) {
-                const result = await DeviceMotionEvent.requestPermission();
-                if (result !== "granted") {
-                    motionPermissionRequested = false;
-                    return false;
-                }
-            }
-
-            startTiltDetection();
-            return true;
-        } catch (e) {
-            console.log("Motion/orientation permission failed:", e);
-            motionPermissionRequested = false;
-            return false;
-        }
-    }
-
+    
     // 平滑tilt
     let targetTiltX = 0;
     let targetTiltY = 0;
-
-    function startTiltDetection() {
-        if (orientationEnabled) return;
-        orientationEnabled = true;
-
-        window.addEventListener("deviceorientation", (e) => {
-            let gamma = e.gamma || 0;
-            let beta = e.beta || 0;
-
-            gamma = Math.max(-20, Math.min(20, gamma));
-            beta = Math.max(-20, Math.min(20, beta));
-
-            targetTiltX = gamma / 20;
-            targetTiltY = (beta - 8) / 28;
-        });
-    }
 
     Ticker.add(() => {
         fxDrift += 0.01;
