@@ -104,8 +104,9 @@ function ready() {
     let tiltX = 0;
     let tiltY = 0;
     let fxDrift = 0;
+    let targetTiltX = 0;
+    let targetTiltY = 0;
     let orientationEnabled = false;
-    let motionPermissionRequested = false;
     let mouseParallaxX = 0;
     let mouseParallaxY = 0;
 
@@ -1451,8 +1452,7 @@ function ready() {
 
         const duration = rand(0.9, 1.5, false); // 每段飞行的快慢
         butterflyElapsed += duration;
-
-        const startRot = butterfly.rotation || 0;
+        
         const steps = Math.round(duration * 60); // 每秒约60帧
         let step = 0;
 
@@ -1622,8 +1622,6 @@ function ready() {
     // ---------------------------------
     // Dragon Shake Dizzy
     // ---------------------------------
-    let shakeDetectionStarted = false;
-
     function triggerDizzy() {
         if (gameData.stage !== "dragon") return;
 
@@ -1648,11 +1646,6 @@ function ready() {
     // ---------------------------------
     // BG affected by phone Tilt
     // ---------------------------------
-    
-    // 平滑tilt
-    let targetTiltX = 0;
-    let targetTiltY = 0;
-
     Ticker.add(() => {
         fxDrift += 0.01;
         tiltX += (targetTiltX - tiltX) * 0.08;
