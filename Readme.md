@@ -1,11 +1,7 @@
 # Dragon Lark Companion – Mobile PWA (ZIMJS) 
 
 Author: Jing Lyu
-Version: v.36.0
-Known issue: 
-The app is already built and capable of being used on a mobile device; 
-however during my test with vccode live server or python server, the address can be accessed on the computer, 
-but cannot be accessed by iPhone, same WIFI or hotspot both don't work. This is a problem to be solved.
+Version: v.37.0
 
 ## Overview
 
