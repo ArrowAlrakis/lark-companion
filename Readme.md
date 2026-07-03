@@ -1,7 +1,7 @@
 # Dragon Lark Companion – Mobile PWA (ZIMJS) 
 
-Author: Jing Lyu
-Version: v.37.0
+Author: Jing Lyu 
+Version: v.37.0 
 Project Link (play here): https://arrowalrakis.github.io/lark-companion/
 
 ## Overview
